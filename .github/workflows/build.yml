@@ -1,0 +1,84 @@
+name: Build
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [macos-latest, ubuntu-latest, windows-latest]
+        include:
+          - platform: macos-latest
+            args: --mac
+          - platform: ubuntu-latest
+            args: --linux
+          - platform: windows-latest
+            args: --win
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          # Install system dependencies if needed
+          if [ "${{ matrix.platform }}" = "ubuntu-latest" ]; then
+            sudo apt-get update
+            sudo apt-get install -y gphoto2 libgphoto2-dev libjpeg-dev libpng-dev
+          fi
+
+          npm ci
+
+      - name: Build application
+        run: |
+          npm run build
+
+      - name: Build installers
+        run: |
+          npm run build:all ${{ matrix.args }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: maja-photobooth-${{ matrix.platform }}
+          path: |
+            dist/
+            !dist/*.map
+          retention-days: 7
+
+  # Create GitHub Release on tag push
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          generate-release-notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
